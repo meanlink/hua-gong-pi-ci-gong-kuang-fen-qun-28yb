@@ -6,6 +6,16 @@ KMeans 聚类的真实业务分析小型项目。完整模拟客户、痛点、�
 数据接入（JSON/CSV、字段验证、批次指纹）→ 参数化分析（异步 Python worker）→ 结果复核（指标、图形、明细、解释、批准）→ 定时分发（本地收件箱、CSV/JSON、SHA256）；另有业务总览和审计轨迹。
 三个贯穿全栈的实体：Dataset 数据批次、Job 分析任务、Report 分发计划；辅助 User、Audit、Delivery。
 
+## 连续凭据、封存与离线核验
+旧 `audits` 表仅为可读操作日志，**不作为防篡改依据**。真正的工艺复查凭据由哈希链承载（页面“凭据与封存”，后端 `/credibility`）：
+- **连续凭据链**：接入 `dataset.intake`、分析状态 `job.queued/running/completed/failed/recovered`、批准 `job.approved`、简报 `report.scheduled/archived/toggled`、封存 `seal.started/completed` 全部落链。每条凭据含全库唯一连续 `seq`、前条 `entry_hash`（prev_hash）与覆盖自身内容的自哈希；序号由数据库行锁串行分配，并发操作仍有唯一顺序。
+- **业务与凭据同生共死**：凭据与业务变更在同一事务写入，业务失败整体回滚，不占用 seq（不留空号）；成功才一起提交。
+- **请求幂等**：写请求带 `Idempotency-Key` 头，重试由中间件回放首次响应，不重复变更或记账；业务失败不留幂等占位，可安全重试。
+- **封存**：负责人可封存截至某条 seq 的凭据，系统逐条另存到与在线库隔离的 `seal_entries`，范围即刻固定，封存途中及之后的新操作不会混入；分批提交，中断后用“继续封存”从断点恢复，重试沿用同一封存内容。
+- **导出与离线核验**：封存完成可下载自描述 `*.seal.json`。核验以另存的封存凭据为准，只依赖文件自身重算哈希，能指出**篡改（tamper）、缺条/空号（gap）、乱序（order）、整段尾部被删（truncated）及可信起点不符（genesis）**。独立脚本仅用标准库：`python -I backend/scripts/verify_seal.py 封存文件.seal.json`（退出码 0 通过 / 1 发现问题 / 2 文件错误）；页面也支持上传封存文件在线核验。
+- **可信起点**：seq=0 的 genesis 内容固定，哈希在迁移与启动时幂等建立，可经 `/credibility/anchor` 独立比对。
+
+
 ## 快速启动
 ```bash
 cp .env.example .env

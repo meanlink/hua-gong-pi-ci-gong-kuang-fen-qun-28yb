@@ -8,7 +8,6 @@ from src.models import Report, Delivery
 from src.schemas.report import ReportInput
 from src.middlewares.auth import current_user, admin_only
 from src.services import reports
-from src.services.audit import record
 from src.utils.serialization import report_dict, delivery_dict
 router=APIRouter()
 @router.get('/reports')
@@ -16,13 +15,17 @@ def listing(db=Depends(get_db),u=Depends(current_user)):
     return [report_dict(r) for r in db.scalars(select(Report).order_by(Report.id.desc()))]
 @router.post('/reports',status_code=201)
 def create(data:ReportInput,db=Depends(get_db),u=Depends(admin_only)):
-    r=reports.create(db,data); record(db,u.email,'report.schedule',{'id':r.id,'destination':r.destination}); db.commit()
+    r=reports.create(db,data,u.email)
+    db.commit()
     return report_dict(r)
 @router.post('/reports/{id}/toggle')
 def toggle(id:int,db=Depends(get_db),u=Depends(admin_only)):
     r=db.get(Report,id)
     if not r:raise HTTPException(404,'分发计划不存在')
-    r.enabled=not r.enabled;record(db,u.email,'report.toggle',{'id':id,'enabled':r.enabled});db.commit()
+    r.enabled=not r.enabled
+    from src.services import credentials
+    credentials.append(db,'report.toggled',u.email,{'report_id':id,'enabled':r.enabled})
+    db.commit()
     return report_dict(r)
 @router.get('/deliveries')
 def deliveries(db=Depends(get_db),u=Depends(current_user)):

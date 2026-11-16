@@ -2,9 +2,10 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from src.models import Dataset
 from src.services.business import metadata
+from src.services import credentials
 from src.utils.serialization import checksum
 import math, time
-def create(db, data):
+def create(db, data, actor):
     name=data.name.strip()
     if len(name)<2: raise HTTPException(422, '批次名称去除空格后至少需要两个字符')
     if db.scalar(select(Dataset).where(Dataset.name==name)):
@@ -20,4 +21,9 @@ def create(db, data):
                 except (TypeError, ValueError, OverflowError): raise HTTPException(422, f'第 {index+1} 行 {c["label"]} 必须为有限数值')
     d=Dataset(name=name, source=data.source, records=data.records, checksum=checksum(data.records), created_at=time.time())
     db.add(d); db.flush()
+    # 业务变更与凭据在同一事务：任一失败整体回滚，不产生空号凭据。
+    credentials.append(db, 'dataset.intake', actor, {
+        'dataset_id': d.id, 'name': d.name, 'source': d.source,
+        'rows': len(d.records), 'checksum': d.checksum,
+    })
     return d

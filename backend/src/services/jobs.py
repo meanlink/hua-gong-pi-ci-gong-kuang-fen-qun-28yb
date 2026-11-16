@@ -4,6 +4,7 @@ from redis import Redis
 from src.config.settings import REDIS_URL
 from src.models import Dataset, Job
 from src.services.business import metadata
+from src.services import credentials
 def create(db, data, user):
     if not db.get(Dataset,data.dataset_id): raise HTTPException(404,'数据批次不存在')
     allowed={p['key']:p for p in metadata().get('parameters',[])}
@@ -22,6 +23,11 @@ def create(db, data, user):
             raise HTTPException(422,f'{p["label"]} 不是有效选项')
     j=Job(name=data.name, dataset_id=data.dataset_id, params=params, created_by=user.id, created_at=time.time(), status='queued')
     db.add(j); db.flush()
+    d=db.get(Dataset,data.dataset_id)
+    credentials.append(db, 'job.queued', user.email, {
+        'job_id': j.id, 'name': j.name, 'dataset_id': d.id,
+        'dataset_checksum': d.checksum, 'params': j.params, 'status': j.status,
+    })
     return j
 def enqueue(job_id):
     try:
